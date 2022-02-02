@@ -12,6 +12,7 @@ import (
 type Options struct {
 	CleaningInterval time.Duration
 	DatabasePath     string
+	CustomType       interface{}
 }
 
 type Pantry struct {
@@ -22,11 +23,11 @@ type Pantry struct {
 }
 
 type Item struct {
-	Value   string
+	Value   interface{}
 	Expires int64
 }
 
-func (pantry *Pantry) Get(key string) (string, bool) {
+func (pantry *Pantry) Get(key string) (interface{}, bool) {
 	pantry.mutex.RLock()
 	defer pantry.mutex.RUnlock()
 
@@ -37,11 +38,11 @@ func (pantry *Pantry) Get(key string) (string, bool) {
 	return item.Value, found
 }
 
-func (pantry *Pantry) GetAll() map[string]string {
+func (pantry *Pantry) GetAll() map[string]interface{} {
 	pantry.mutex.RLock()
 	defer pantry.mutex.RUnlock()
 
-	items := make(map[string]string)
+	items := make(map[string]interface{})
 	for key, item := range pantry.store {
 		if time.Now().UnixNano() > item.Expires {
 			continue
@@ -51,7 +52,7 @@ func (pantry *Pantry) GetAll() map[string]string {
 	return items
 }
 
-func (pantry *Pantry) Set(key string, value string, expiration time.Duration) error {
+func (pantry *Pantry) Set(key string, value interface{}, expiration time.Duration) error {
 	pantry.mutex.Lock()
 	pantry.store[key] = Item{
 		Value:   value,
@@ -74,6 +75,12 @@ func (pantry *Pantry) Remove(key string) error {
 		return pantry.Save()
 	}
 	return nil
+}
+
+func (pantry *Pantry) IsEmpty() bool {
+	pantry.mutex.RLock()
+	defer pantry.mutex.RUnlock()
+	return len(pantry.store) == 0
 }
 
 func (pantry *Pantry) Close() {
@@ -107,9 +114,12 @@ func (pantry *Pantry) Load() error {
 func (pantry *Pantry) Save() error {
 	pantry.mutex.RLock()
 	defer pantry.mutex.RUnlock()
+
 	buffer := new(bytes.Buffer)
 	encoder := gob.NewEncoder(buffer)
-	encoder.Encode(pantry.store)
+	if err := encoder.Encode(pantry.store); err != nil {
+		return err
+	}
 	return os.WriteFile(pantry.options.DatabasePath, buffer.Bytes(), 0644)
 }
 
@@ -117,10 +127,15 @@ func New(options *Options) *Pantry {
 	finalOptions := Options{
 		CleaningInterval: options.CleaningInterval,
 		DatabasePath:     options.DatabasePath,
+		CustomType:       options.CustomType,
 	}
 
 	if options.CleaningInterval == 0 {
 		finalOptions.CleaningInterval = time.Minute
+	}
+
+	if finalOptions.CustomType != nil {
+		gob.Register(finalOptions.CustomType)
 	}
 
 	pantry := &Pantry{
