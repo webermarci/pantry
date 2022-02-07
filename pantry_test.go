@@ -93,8 +93,8 @@ func TestCorruptedDatabase(t *testing.T) {
 	}()
 
 	err = p.Load()
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatalf("no error")
 	}
 }
 

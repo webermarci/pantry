@@ -123,11 +123,13 @@ func (pantry *Pantry) Load() error {
 
 		buffer := bytes.NewBuffer(content)
 		decoder := gob.NewDecoder(buffer)
+
 		pantry.mutex.Lock()
 		err = decoder.Decode(&pantry.store)
 		pantry.mutex.Unlock()
+
 		if err != nil {
-			return pantry.Save()
+			return err
 		}
 		return nil
 	} else {
