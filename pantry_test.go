@@ -398,7 +398,7 @@ func TestStruct(t *testing.T) {
 
 	p := New(&Options{
 		DatabasePath: "test.db",
-	})
+	}).Type(TestData{})
 
 	defer func() {
 		err := os.Remove(p.options.DatabasePath)

@@ -5,7 +5,6 @@ import (
 	"encoding/gob"
 	"io/ioutil"
 	"os"
-	"reflect"
 	"sync"
 	"time"
 )
@@ -69,23 +68,6 @@ func (pantry *Pantry) Set(key string, value interface{}, expiration time.Duratio
 	}
 	pantry.mutex.Unlock()
 
-	if pantry.options.DatabasePath != "" {
-		valueType := reflect.TypeOf(value).Name()
-
-		switch valueType {
-		case "string", "bool", "byte", "rune", "int", "uint", "int8", "uint8",
-			"int16", "uint16", "int32", "uint32", "int64", "uint64", "uintptr",
-			"float32", "float64", "complex64", "complex128":
-		default:
-			pantry.mutex.Lock()
-			if !pantry.registered[valueType] {
-				pantry.registered[valueType] = true
-				gob.Register(value)
-			}
-			pantry.mutex.Unlock()
-		}
-	}
-
 	return &Result{
 		pantry: pantry,
 	}
@@ -147,6 +129,13 @@ func (pantry *Pantry) Save() error {
 		return err
 	}
 	return os.WriteFile(pantry.options.DatabasePath, buffer.Bytes(), 0644)
+}
+
+func (pantry *Pantry) Type(v interface{}) *Pantry {
+	if pantry.options.DatabasePath != "" {
+		gob.Register(v)
+	}
+	return pantry
 }
 
 func New(options *Options) *Pantry {
