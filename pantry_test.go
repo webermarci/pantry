@@ -3,6 +3,7 @@ package pantry
 import (
 	"os"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -41,10 +42,7 @@ func TestCleaning(t *testing.T) {
 		t.Fatalf("cleaning interval is not set correctly: %s", p.options.CleaningInterval)
 	}
 
-	err := p.Set("test", "hello", time.Millisecond)
-	if err != nil {
-		t.Fatal(err)
-	}
+	p.Set("test", "hello", time.Millisecond)
 
 	_, found := p.Get("test")
 	if !found {
@@ -122,9 +120,7 @@ func TestRemove(t *testing.T) {
 	p := New(&Options{})
 	defer p.Close()
 
-	if err := p.Set("test", "hello", time.Hour); err != nil {
-		t.Fatal(err)
-	}
+	p.Set("test", "hello", time.Hour)
 
 	_, found := p.Get("test")
 	if !found {
@@ -132,9 +128,7 @@ func TestRemove(t *testing.T) {
 		t.Fatal("not found")
 	}
 
-	if err := p.Remove("test"); err != nil {
-		t.Fatal(err)
-	}
+	p.Remove("test")
 
 	_, found = p.Get("test")
 	if found {
@@ -156,7 +150,7 @@ func TestRemovePersisted(t *testing.T) {
 		}
 	}()
 
-	if err := p.Set("test", "hello", time.Hour); err != nil {
+	if err := p.Set("test", "hello", time.Hour).Save(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -166,7 +160,7 @@ func TestRemovePersisted(t *testing.T) {
 		t.Fatal("not found")
 	}
 
-	if err := p.Remove("test"); err != nil {
+	if err := p.Remove("test").Save(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -181,17 +175,9 @@ func TestGetAll(t *testing.T) {
 	p := New(&Options{})
 	defer p.Close()
 
-	if err := p.Set("first", "1", time.Hour); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := p.Set("second", "2", time.Hour); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := p.Set("third", "3", time.Hour); err != nil {
-		t.Fatal(err)
-	}
+	p.Set("first", "1", time.Hour)
+	p.Set("second", "2", time.Hour)
+	p.Set("third", "3", time.Hour)
 
 	values := p.GetAll()
 	if len(values) != 3 {
@@ -215,7 +201,7 @@ func TestString(t *testing.T) {
 		}
 	}()
 
-	if err := p.Set(key, value, time.Hour); err != nil {
+	if err := p.Set(key, value, time.Hour).Save(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -282,7 +268,7 @@ func TestInt(t *testing.T) {
 		}
 	}()
 
-	if err := p.Set(key, value, time.Hour); err != nil {
+	if err := p.Set(key, value, time.Hour).Save(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -349,7 +335,7 @@ func TestFloat(t *testing.T) {
 		}
 	}()
 
-	if err := p.Set(key, value, time.Hour); err != nil {
+	if err := p.Set(key, value, time.Hour).Save(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -412,7 +398,6 @@ func TestStruct(t *testing.T) {
 
 	p := New(&Options{
 		DatabasePath: "test.db",
-		CustomType:   TestData{},
 	})
 
 	defer func() {
@@ -422,7 +407,7 @@ func TestStruct(t *testing.T) {
 		}
 	}()
 
-	if err := p.Set(key, value, time.Hour); err != nil {
+	if err := p.Set(key, value, time.Hour).Save(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -471,5 +456,36 @@ func TestStruct(t *testing.T) {
 	if casted != value {
 		t.Log(p.store)
 		t.Fatal("invalid value")
+	}
+}
+
+func BenchmarkCache(b *testing.B) {
+	p := New(&Options{})
+	defer p.Close()
+
+	for i := 0; i < b.N; i++ {
+		v := strconv.Itoa(i)
+		p.Set(v, v, time.Hour)
+	}
+}
+
+func BenchmarkPersisted(b *testing.B) {
+	p := New(&Options{
+		DatabasePath: "test.db",
+	})
+	defer p.Close()
+
+	defer func() {
+		err := os.Remove(p.options.DatabasePath)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}()
+
+	for i := 0; i < b.N; i++ {
+		v := strconv.Itoa(i)
+		if err := p.Set(v, v, time.Hour).Save(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

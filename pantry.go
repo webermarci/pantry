@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"io/ioutil"
 	"os"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -12,19 +13,27 @@ import (
 type Options struct {
 	CleaningInterval time.Duration
 	DatabasePath     string
-	CustomType       interface{}
 }
 
 type Pantry struct {
-	store   map[string]Item
-	mutex   sync.RWMutex
-	options Options
-	close   chan struct{}
+	store      map[string]Item
+	mutex      sync.RWMutex
+	options    Options
+	registered map[string]bool
+	close      chan struct{}
 }
 
 type Item struct {
 	Value   interface{}
 	Expires int64
+}
+
+type Result struct {
+	pantry *Pantry
+}
+
+func (result *Result) Save() error {
+	return result.pantry.Save()
 }
 
 func (pantry *Pantry) Get(key string) (interface{}, bool) {
@@ -52,7 +61,7 @@ func (pantry *Pantry) GetAll() map[string]interface{} {
 	return items
 }
 
-func (pantry *Pantry) Set(key string, value interface{}, expiration time.Duration) error {
+func (pantry *Pantry) Set(key string, value interface{}, expiration time.Duration) *Result {
 	pantry.mutex.Lock()
 	pantry.store[key] = Item{
 		Value:   value,
@@ -61,20 +70,35 @@ func (pantry *Pantry) Set(key string, value interface{}, expiration time.Duratio
 	pantry.mutex.Unlock()
 
 	if pantry.options.DatabasePath != "" {
-		return pantry.Save()
+		valueType := reflect.TypeOf(value).Name()
+
+		switch valueType {
+		case "string", "bool", "byte", "rune", "int", "uint", "int8", "uint8",
+			"int16", "uint16", "int32", "uint32", "int64", "uint64", "uintptr",
+			"float32", "float64", "complex64", "complex128":
+		default:
+			pantry.mutex.Lock()
+			if !pantry.registered[valueType] {
+				pantry.registered[valueType] = true
+				gob.Register(value)
+			}
+			pantry.mutex.Unlock()
+		}
 	}
-	return nil
+
+	return &Result{
+		pantry: pantry,
+	}
 }
 
-func (pantry *Pantry) Remove(key string) error {
+func (pantry *Pantry) Remove(key string) *Result {
 	pantry.mutex.Lock()
 	delete(pantry.store, key)
 	pantry.mutex.Unlock()
 
-	if pantry.options.DatabasePath != "" {
-		return pantry.Save()
+	return &Result{
+		pantry: pantry,
 	}
-	return nil
 }
 
 func (pantry *Pantry) IsEmpty() bool {
@@ -127,22 +151,18 @@ func New(options *Options) *Pantry {
 	finalOptions := Options{
 		CleaningInterval: options.CleaningInterval,
 		DatabasePath:     options.DatabasePath,
-		CustomType:       options.CustomType,
 	}
 
 	if options.CleaningInterval == 0 {
 		finalOptions.CleaningInterval = time.Minute
 	}
 
-	if finalOptions.CustomType != nil {
-		gob.Register(finalOptions.CustomType)
-	}
-
 	pantry := &Pantry{
-		store:   make(map[string]Item),
-		mutex:   sync.RWMutex{},
-		options: finalOptions,
-		close:   make(chan struct{}),
+		store:      make(map[string]Item),
+		mutex:      sync.RWMutex{},
+		options:    finalOptions,
+		registered: make(map[string]bool),
+		close:      make(chan struct{}),
 	}
 
 	go func() {
