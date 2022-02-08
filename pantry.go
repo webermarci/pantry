@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"sync"
 	"time"
 )
@@ -100,6 +101,12 @@ func (pantry *Pantry) Load() error {
 
 	if directory == "" {
 		return nil
+	}
+
+	if _, err := os.Stat(directory); os.IsNotExist(err) {
+		if err := os.Mkdir(directory, 0755); err != nil {
+			return err
+		}
 	}
 
 	files, err := ioutil.ReadDir(directory)

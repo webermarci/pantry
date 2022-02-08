@@ -77,8 +77,15 @@ func TestLoadWithMissingDirectory(t *testing.T) {
 	})
 	defer p.Close()
 
-	if err := p.Load(); err == nil {
-		t.Fatal("expected error")
+	defer func() {
+		err := os.RemoveAll(p.options.PersistenceDirectory)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	if err := p.Load(); err != nil {
+		t.Fatal(err)
 	}
 }
 
