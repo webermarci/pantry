@@ -2,7 +2,6 @@ package pantry
 
 import (
 	"os"
-	"reflect"
 	"strconv"
 	"testing"
 	"time"
@@ -12,23 +11,12 @@ func TestEmptyOptions(t *testing.T) {
 	p := New(&Options{})
 	defer p.Close()
 
-	if p.options.DatabasePath != "" {
-		t.Fatal("database name is not empty")
+	if p.options.PersistenceDirectory != "" {
+		t.Fatal("persitence directory is not empty")
 	}
 
 	if p.options.CleaningInterval != time.Minute {
 		t.Fatalf("cleaning interval is not 1 minute: %s", p.options.CleaningInterval)
-	}
-}
-
-func TestDatabasePathOption(t *testing.T) {
-	p := New(&Options{
-		DatabasePath: "test.db",
-	})
-	defer p.Close()
-
-	if p.options.DatabasePath != "test.db" {
-		t.Fatal("database name is not set")
 	}
 }
 
@@ -74,63 +62,203 @@ func TestIsEmtpy(t *testing.T) {
 	}
 }
 
-func TestCorruptedDatabase(t *testing.T) {
-	p := New(&Options{
-		DatabasePath: "test.db",
-	})
+func TestLoadWithoutSetDirectory(t *testing.T) {
+	p := New(&Options{})
 	defer p.Close()
-
-	err := os.WriteFile(p.options.DatabasePath, []byte("hello"), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	defer func() {
-		err := os.Remove(p.options.DatabasePath)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}()
-
-	err = p.Load()
-	if err == nil {
-		t.Fatalf("no error")
-	}
-}
-
-func TestDatabaseDoesntExists(t *testing.T) {
-	p := New(&Options{
-		DatabasePath: "test.db",
-	})
-	defer p.Close()
-
-	defer func() {
-		err := os.Remove(p.options.DatabasePath)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}()
 
 	if err := p.Load(); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestRemove(t *testing.T) {
+func TestLoadWithMissingDirectory(t *testing.T) {
+	p := New(&Options{
+		PersistenceDirectory: t.Name(),
+	})
+	defer p.Close()
+
+	if err := p.Load(); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestSet(t *testing.T) {
+	key := "test"
+	value := "hello"
+
 	p := New(&Options{})
 	defer p.Close()
 
-	p.Set("test", "hello", time.Hour)
+	_, found := p.Get(key)
+	if found {
+		t.Log(p.store)
+		t.Fatal("found")
+	}
 
-	_, found := p.Get("test")
+	p.Set(key, value, time.Hour)
+
+	_, found = p.Get(key)
+	if !found {
+		t.Log(p.store)
+		t.Fatal("not found")
+	}
+}
+
+func TestSetPersisted(t *testing.T) {
+	key := "test"
+	value := "hello"
+
+	p := New(&Options{
+		PersistenceDirectory: t.Name(),
+	})
+
+	defer func() {
+		err := os.RemoveAll(p.options.PersistenceDirectory)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	_, found := p.Get(key)
+	if found {
+		t.Log(p.store)
+		t.Fatal("found")
+	}
+
+	if err := p.Set(key, value, time.Hour).Persist(); err != nil {
+		t.Log(p.store)
+		t.Fatal(err)
+	}
+
+	_, found = p.Get(key)
 	if !found {
 		t.Log(p.store)
 		t.Fatal("not found")
 	}
 
-	p.Remove("test")
+	p.Close()
 
-	_, found = p.Get("test")
+	p = New(&Options{
+		PersistenceDirectory: t.Name(),
+	})
+
+	if err := p.Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, found = p.Get(key)
+	if !found {
+		t.Log(p.store)
+		t.Fatal("not found")
+	}
+
+	p.Close()
+}
+
+func TestSetPersistedStruct(t *testing.T) {
+	type TestData struct {
+		Number int
+		Text   string
+	}
+
+	key := "test"
+	value := TestData{Number: 42, Text: "hello"}
+
+	p := New(&Options{
+		PersistenceDirectory: t.Name(),
+	}).Type(TestData{})
+
+	defer func() {
+		err := os.RemoveAll(p.options.PersistenceDirectory)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	_, found := p.Get(key)
+	if found {
+		t.Log(p.store)
+		t.Fatal("found")
+	}
+
+	if err := p.Set(key, value, time.Hour).Persist(); err != nil {
+		t.Log(p.store)
+		t.Fatal(err)
+	}
+
+	_, found = p.Get(key)
+	if !found {
+		t.Log(p.store)
+		t.Fatal("not found")
+	}
+
+	p.Close()
+
+	p = New(&Options{
+		PersistenceDirectory: t.Name(),
+	})
+
+	if err := p.Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	v, found := p.Get(key)
+	if !found {
+		t.Log(p.store)
+		t.Fatal("not found")
+	}
+
+	if v.(TestData).Number != 42 {
+		t.Fatal("not 42")
+	}
+
+	p.Close()
+}
+
+func TestCustomStructWithoutSettingType(t *testing.T) {
+	type TestData struct {
+		Number int
+		Text   string
+	}
+
+	key := "test"
+	value := TestData{Number: 42, Text: "hello"}
+
+	p := New(&Options{
+		PersistenceDirectory: t.Name(),
+	})
+	defer p.Close()
+
+	defer func() {
+		err := os.RemoveAll(p.options.PersistenceDirectory)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	if err := p.Set(key, value, time.Hour).Persist(); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestRemove(t *testing.T) {
+	key := "test"
+	value := "hello"
+
+	p := New(&Options{})
+	defer p.Close()
+
+	p.Set(key, value, time.Hour)
+
+	_, found := p.Get(key)
+	if !found {
+		t.Log(p.store)
+		t.Fatal("not found")
+	}
+
+	p.Remove(key)
+
+	_, found = p.Get(key)
 	if found {
 		t.Log(p.store)
 		t.Fatal("found")
@@ -138,46 +266,66 @@ func TestRemove(t *testing.T) {
 }
 
 func TestRemovePersisted(t *testing.T) {
+	key := "test"
+	value := "hello"
+
 	p := New(&Options{
-		DatabasePath: "test.db",
+		PersistenceDirectory: t.Name(),
 	})
-	defer p.Close()
 
 	defer func() {
-		err := os.Remove(p.options.DatabasePath)
+		err := os.RemoveAll(p.options.PersistenceDirectory)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}()
 
-	if err := p.Set("test", "hello", time.Hour).Save(); err != nil {
+	if err := p.Set(key, value, time.Hour).Persist(); err != nil {
 		t.Fatal(err)
 	}
 
-	_, found := p.Get("test")
+	_, found := p.Get(key)
 	if !found {
 		t.Log(p.store)
 		t.Fatal("not found")
 	}
 
-	if err := p.Remove("test").Save(); err != nil {
+	if err := p.Remove(key).Persist(); err != nil {
 		t.Fatal(err)
 	}
 
-	_, found = p.Get("test")
+	_, found = p.Get(key)
 	if found {
 		t.Log(p.store)
 		t.Fatal("found")
 	}
+
+	p.Close()
+
+	p = New(&Options{
+		PersistenceDirectory: t.Name(),
+	})
+
+	if err := p.Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, found = p.Get(key)
+	if found {
+		t.Log(p.store)
+		t.Fatal("found")
+	}
+
+	p.Close()
 }
 
 func TestGetAll(t *testing.T) {
 	p := New(&Options{})
 	defer p.Close()
 
-	p.Set("first", "1", time.Hour)
-	p.Set("second", "2", time.Hour)
-	p.Set("third", "3", time.Hour)
+	p.Set("first", 1, time.Hour)
+	p.Set("second", 2, time.Hour)
+	p.Set("third", 3, time.Hour)
 
 	values := p.GetAll()
 	if len(values) != 3 {
@@ -186,276 +334,98 @@ func TestGetAll(t *testing.T) {
 	}
 }
 
-func TestString(t *testing.T) {
-	key := "string"
-	value := "hello"
-
+func TestGetAllIgnoreExpired(t *testing.T) {
 	p := New(&Options{
-		DatabasePath: "test.db",
-	})
-
-	defer func() {
-		err := os.Remove(p.options.DatabasePath)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}()
-
-	if err := p.Set(key, value, time.Hour).Save(); err != nil {
-		t.Fatal(err)
-	}
-
-	v, found := p.Get(key)
-	if !found {
-		t.Log(p.store)
-		t.Fatal("not found")
-	}
-
-	if reflect.TypeOf(v).Kind() != reflect.String {
-		t.Log(v)
-		t.Fatalf("invalid type: %s", reflect.TypeOf(v))
-	}
-
-	casted := v.(string)
-
-	if casted != value {
-		t.Log(p.store)
-		t.Fatal("invalid value")
-	}
-
-	p.Close()
-
-	p = New(&Options{
-		DatabasePath: "test.db",
+		CleaningInterval: time.Minute,
 	})
 	defer p.Close()
 
-	if err := p.Load(); err != nil {
-		t.Fatal(err)
+	p.Set("first", 1, 10*time.Millisecond)
+	p.Set("second", 2, 10*time.Millisecond)
+	p.Set("third", 3, 10*time.Millisecond)
+
+	values := p.GetAll()
+	if len(values) != 3 {
+		t.Log(values)
+		t.Fatal("not 3 items")
 	}
 
-	v, found = p.Get(key)
-	if !found {
-		t.Log(p.store)
-		t.Fatal("not found")
-	}
+	time.Sleep(20 * time.Millisecond)
 
-	if reflect.TypeOf(v).Kind() != reflect.String {
-		t.Log(v)
-		t.Fatalf("invalid type: %s", reflect.TypeOf(v))
-	}
-
-	casted = v.(string)
-
-	if casted != value {
-		t.Log(p.store)
-		t.Fatal("invalid value")
+	values = p.GetAll()
+	if len(values) != 0 {
+		t.Log(values)
+		t.Fatal("not ignored")
 	}
 }
 
-func TestInt(t *testing.T) {
-	key := "int"
-	value := 42
-
+func TestGetAllPersisted(t *testing.T) {
 	p := New(&Options{
-		DatabasePath: "test.db",
+		PersistenceDirectory: t.Name(),
 	})
 
 	defer func() {
-		err := os.Remove(p.options.DatabasePath)
+		err := os.RemoveAll(p.options.PersistenceDirectory)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}()
 
-	if err := p.Set(key, value, time.Hour).Save(); err != nil {
+	if err := p.Set("first", 1, time.Hour).Persist(); err != nil {
 		t.Fatal(err)
 	}
 
-	v, found := p.Get(key)
-	if !found {
-		t.Log(p.store)
-		t.Fatal("not found")
+	if err := p.Set("second", 2, time.Hour).Persist(); err != nil {
+		t.Fatal(err)
 	}
 
-	if reflect.TypeOf(v).Kind() != reflect.Int {
-		t.Log(v)
-		t.Fatalf("invalid type: %s", reflect.TypeOf(v))
+	if err := p.Set("third", 3, time.Hour).Persist(); err != nil {
+		t.Fatal(err)
 	}
 
-	casted := v.(int)
-
-	if casted != value {
-		t.Log(p.store)
-		t.Fatal("invalid value")
+	values := p.GetAll()
+	if len(values) != 3 {
+		t.Log(values)
+		t.Fatal("not 3 items")
 	}
 
 	p.Close()
 
 	p = New(&Options{
-		DatabasePath: "test.db",
+		PersistenceDirectory: t.Name(),
 	})
-	defer p.Close()
 
 	if err := p.Load(); err != nil {
 		t.Fatal(err)
 	}
 
-	v, found = p.Get(key)
-	if !found {
-		t.Log(p.store)
-		t.Fatal("not found")
-	}
-
-	if reflect.TypeOf(v).Kind() != reflect.Int {
-		t.Log(v)
-		t.Fatalf("invalid type: %s", reflect.TypeOf(v))
-	}
-
-	casted = v.(int)
-
-	if casted != value {
-		t.Log(p.store)
-		t.Fatal("invalid value")
+	values = p.GetAll()
+	if len(values) != 3 {
+		t.Log(values)
+		t.Fatal("not 3 items")
 	}
 }
 
-func TestFloat(t *testing.T) {
-	key := "int"
-	value := 3.14
-
+func TestInvalidResultAction(t *testing.T) {
 	p := New(&Options{
-		DatabasePath: "test.db",
+		PersistenceDirectory: t.Name(),
 	})
+	defer p.Close()
 
 	defer func() {
-		err := os.Remove(p.options.DatabasePath)
+		err := os.RemoveAll(p.options.PersistenceDirectory)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}()
 
-	if err := p.Set(key, value, time.Hour).Save(); err != nil {
-		t.Fatal(err)
+	result := Result{
+		action: "invalid",
+		pantry: p,
 	}
 
-	v, found := p.Get(key)
-	if !found {
-		t.Log(p.store)
-		t.Fatal("not found")
-	}
-
-	if reflect.TypeOf(v).Kind() != reflect.Float64 {
-		t.Log(v)
-		t.Fatalf("invalid type: %s", reflect.TypeOf(v))
-	}
-
-	casted := v.(float64)
-
-	if casted != value {
-		t.Log(p.store)
-		t.Fatal("invalid value")
-	}
-
-	p.Close()
-
-	p = New(&Options{
-		DatabasePath: "test.db",
-	})
-	defer p.Close()
-
-	if err := p.Load(); err != nil {
-		t.Fatal(err)
-	}
-
-	v, found = p.Get(key)
-	if !found {
-		t.Log(p.store)
-		t.Fatal("not found")
-	}
-
-	if reflect.TypeOf(v).Kind() != reflect.Float64 {
-		t.Log(v)
-		t.Fatalf("invalid type: %s", reflect.TypeOf(v))
-	}
-
-	casted = v.(float64)
-
-	if casted != value {
-		t.Log(p.store)
-		t.Fatal("invalid value")
-	}
-}
-
-func TestStruct(t *testing.T) {
-	type TestData struct {
-		Text   string
-		Number int
-	}
-
-	key := "int"
-	value := TestData{Text: "test", Number: 42}
-
-	p := New(&Options{
-		DatabasePath: "test.db",
-	}).Type(TestData{})
-
-	defer func() {
-		err := os.Remove(p.options.DatabasePath)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}()
-
-	if err := p.Set(key, value, time.Hour).Save(); err != nil {
-		t.Fatal(err)
-	}
-
-	v, found := p.Get(key)
-	if !found {
-		t.Log(p.store)
-		t.Fatal("not found")
-	}
-
-	if reflect.TypeOf(v).Kind() != reflect.Struct {
-		t.Log(v)
-		t.Fatalf("invalid type: %s", reflect.TypeOf(v))
-	}
-
-	casted := v.(TestData)
-
-	if casted != value {
-		t.Log(p.store)
-		t.Fatal("invalid value")
-	}
-
-	p.Close()
-
-	p = New(&Options{
-		DatabasePath: "test.db",
-	})
-	defer p.Close()
-
-	if err := p.Load(); err != nil {
-		t.Fatal(err)
-	}
-
-	v, found = p.Get(key)
-	if !found {
-		t.Log(p.store)
-		t.Fatal("not found")
-	}
-
-	if reflect.TypeOf(v).Kind() != reflect.Struct {
-		t.Log(v)
-		t.Fatalf("invalid type: %s", reflect.TypeOf(v))
-	}
-
-	casted = v.(TestData)
-
-	if casted != value {
-		t.Log(p.store)
-		t.Fatal("invalid value")
+	if err := result.Persist(); err == nil {
+		t.Fatal("expected error")
 	}
 }
 
@@ -471,12 +441,12 @@ func BenchmarkCache(b *testing.B) {
 
 func BenchmarkPersisted(b *testing.B) {
 	p := New(&Options{
-		DatabasePath: "test.db",
+		PersistenceDirectory: b.Name(),
 	})
 	defer p.Close()
 
 	defer func() {
-		err := os.Remove(p.options.DatabasePath)
+		err := os.RemoveAll(p.options.PersistenceDirectory)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -484,7 +454,7 @@ func BenchmarkPersisted(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		v := strconv.Itoa(i)
-		if err := p.Set(v, v, time.Hour).Save(); err != nil {
+		if err := p.Set(v, v, time.Hour).Persist(); err != nil {
 			b.Fatal(err)
 		}
 	}

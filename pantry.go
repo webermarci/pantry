@@ -3,36 +3,29 @@ package pantry
 import (
 	"bytes"
 	"encoding/gob"
+	"fmt"
 	"io/ioutil"
-	"os"
 	"sync"
 	"time"
 )
-
-type Options struct {
-	CleaningInterval time.Duration
-	DatabasePath     string
-}
-
-type Pantry struct {
-	store      map[string]Item
-	mutex      sync.RWMutex
-	options    Options
-	registered map[string]bool
-	close      chan struct{}
-}
 
 type Item struct {
 	Value   interface{}
 	Expires int64
 }
 
-type Result struct {
-	pantry *Pantry
+type Pantry struct {
+	store   map[string]Item
+	mutex   sync.RWMutex
+	close   chan struct{}
+	options Options
 }
 
-func (result *Result) Save() error {
-	return result.pantry.Save()
+func (pantry *Pantry) Type(v interface{}) *Pantry {
+	if pantry.options.PersistenceDirectory != "" {
+		gob.Register(v)
+	}
+	return pantry
 }
 
 func (pantry *Pantry) Get(key string) (interface{}, bool) {
@@ -61,14 +54,18 @@ func (pantry *Pantry) GetAll() map[string]interface{} {
 }
 
 func (pantry *Pantry) Set(key string, value interface{}, expiration time.Duration) *Result {
-	pantry.mutex.Lock()
-	pantry.store[key] = Item{
+	item := Item{
 		Value:   value,
 		Expires: time.Now().Add(expiration).UnixNano(),
 	}
+	pantry.mutex.Lock()
+	pantry.store[key] = item
 	pantry.mutex.Unlock()
 
 	return &Result{
+		action: "set",
+		key:    key,
+		item:   item,
 		pantry: pantry,
 	}
 }
@@ -79,6 +76,8 @@ func (pantry *Pantry) Remove(key string) *Result {
 	pantry.mutex.Unlock()
 
 	return &Result{
+		action: "remove",
+		key:    key,
 		pantry: pantry,
 	}
 }
@@ -97,8 +96,20 @@ func (pantry *Pantry) Close() {
 }
 
 func (pantry *Pantry) Load() error {
-	if fileExists(pantry.options.DatabasePath) {
-		content, err := ioutil.ReadFile(pantry.options.DatabasePath)
+	directory := pantry.options.PersistenceDirectory
+
+	if directory == "" {
+		return nil
+	}
+
+	files, err := ioutil.ReadDir(directory)
+	if err != nil {
+		return err
+	}
+
+	for _, f := range files {
+		fullPath := fmt.Sprintf("%s/%s", directory, f.Name())
+		content, err := ioutil.ReadFile(fullPath)
 		if err != nil {
 			return err
 		}
@@ -106,42 +117,23 @@ func (pantry *Pantry) Load() error {
 		buffer := bytes.NewBuffer(content)
 		decoder := gob.NewDecoder(buffer)
 
-		pantry.mutex.Lock()
-		err = decoder.Decode(&pantry.store)
-		pantry.mutex.Unlock()
-
-		if err != nil {
+		var item Item
+		if err := decoder.Decode(&item); err != nil {
 			return err
 		}
-		return nil
-	} else {
-		return pantry.Save()
-	}
-}
 
-func (pantry *Pantry) Save() error {
-	pantry.mutex.RLock()
-	defer pantry.mutex.RUnlock()
-
-	buffer := new(bytes.Buffer)
-	encoder := gob.NewEncoder(buffer)
-	if err := encoder.Encode(pantry.store); err != nil {
-		return err
+		pantry.mutex.Lock()
+		pantry.store[f.Name()] = item
+		pantry.mutex.Unlock()
 	}
-	return os.WriteFile(pantry.options.DatabasePath, buffer.Bytes(), 0644)
-}
 
-func (pantry *Pantry) Type(v interface{}) *Pantry {
-	if pantry.options.DatabasePath != "" {
-		gob.Register(v)
-	}
-	return pantry
+	return nil
 }
 
 func New(options *Options) *Pantry {
 	finalOptions := Options{
-		CleaningInterval: options.CleaningInterval,
-		DatabasePath:     options.DatabasePath,
+		CleaningInterval:     options.CleaningInterval,
+		PersistenceDirectory: options.PersistenceDirectory,
 	}
 
 	if options.CleaningInterval == 0 {
@@ -149,11 +141,10 @@ func New(options *Options) *Pantry {
 	}
 
 	pantry := &Pantry{
-		store:      make(map[string]Item),
-		mutex:      sync.RWMutex{},
-		options:    finalOptions,
-		registered: make(map[string]bool),
-		close:      make(chan struct{}),
+		store:   make(map[string]Item),
+		mutex:   sync.RWMutex{},
+		options: finalOptions,
+		close:   make(chan struct{}),
 	}
 
 	go func() {
@@ -178,12 +169,4 @@ func New(options *Options) *Pantry {
 	}()
 
 	return pantry
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		return false
-	}
-	return !info.IsDir()
 }
