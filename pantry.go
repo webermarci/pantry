@@ -165,6 +165,12 @@ func New(options *Options) *Pantry {
 				for key, item := range pantry.store {
 					if time.Now().UnixNano() > item.Expires {
 						delete(pantry.store, key)
+
+						if options.PersistenceDirectory != "" {
+							fileName := fmt.Sprintf("%s/%s",
+								pantry.options.PersistenceDirectory, key)
+							os.Remove(fileName)
+						}
 					}
 				}
 				pantry.mutex.Unlock()

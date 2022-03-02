@@ -436,6 +436,42 @@ func TestInvalidResultAction(t *testing.T) {
 	}
 }
 
+func TestCleanExpiredPersisted(t *testing.T) {
+	key := "test"
+	value := "hello"
+
+	p := New(&Options{
+		PersistenceDirectory: t.Name(),
+		CleaningInterval:     time.Millisecond,
+	})
+
+	defer func() {
+		err := os.RemoveAll(p.options.PersistenceDirectory)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	_, found := p.Get(key)
+	if found {
+		t.Log(p.store)
+		t.Fatal("found")
+	}
+
+	if err := p.Set(key, value, 2*time.Millisecond).Persist(); err != nil {
+		t.Log(p.store)
+		t.Fatal(err)
+	}
+
+	time.Sleep(3 * time.Millisecond)
+
+	_, found = p.Get(key)
+	if found {
+		t.Log(p.store)
+		t.Fatal("found")
+	}
+}
+
 func BenchmarkCache(b *testing.B) {
 	p := New(&Options{})
 	defer p.Close()
