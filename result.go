@@ -8,14 +8,14 @@ import (
 	"os"
 )
 
-type Result struct {
-	pantry *Pantry
+type Result[T any] struct {
+	pantry *Pantry[T]
 	action string
 	key    string
-	item   Item
+	item   Item[T]
 }
 
-func (result *Result) Persist() error {
+func (result *Result[T]) Persist() error {
 	directory := result.pantry.options.PersistenceDirectory
 	if _, err := os.Stat(directory); os.IsNotExist(err) {
 		if err := os.Mkdir(directory, 0755); err != nil {

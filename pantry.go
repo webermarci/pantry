@@ -10,41 +10,34 @@ import (
 	"time"
 )
 
-type Item struct {
-	Value   interface{}
+type Item[T any] struct {
+	Value   T
 	Expires int64
 }
 
-type Pantry struct {
-	store   map[string]Item
+type Pantry[T any] struct {
+	store   map[string]Item[T]
 	mutex   sync.RWMutex
 	close   chan struct{}
 	options Options
 }
 
-func (pantry *Pantry) Type(v interface{}) *Pantry {
-	if pantry.options.PersistenceDirectory != "" {
-		gob.Register(v)
-	}
-	return pantry
-}
-
-func (pantry *Pantry) Get(key string) (interface{}, bool) {
+func (pantry *Pantry[T]) Get(key string) (T, bool) {
 	pantry.mutex.RLock()
 	defer pantry.mutex.RUnlock()
 
 	item, found := pantry.store[key]
 	if found && time.Now().UnixNano() > item.Expires {
-		return "", false
+		return *new(T), false
 	}
 	return item.Value, found
 }
 
-func (pantry *Pantry) GetAll() map[string]interface{} {
+func (pantry *Pantry[T]) GetAll() map[string]T {
 	pantry.mutex.RLock()
 	defer pantry.mutex.RUnlock()
 
-	items := make(map[string]interface{})
+	items := make(map[string]T)
 	for key, item := range pantry.store {
 		if time.Now().UnixNano() > item.Expires {
 			continue
@@ -54,8 +47,8 @@ func (pantry *Pantry) GetAll() map[string]interface{} {
 	return items
 }
 
-func (pantry *Pantry) Set(key string, value interface{}, expiration time.Duration) *Result {
-	item := Item{
+func (pantry *Pantry[T]) Set(key string, value T, expiration time.Duration) *Result[T] {
+	item := Item[T]{
 		Value:   value,
 		Expires: time.Now().Add(expiration).UnixNano(),
 	}
@@ -63,7 +56,7 @@ func (pantry *Pantry) Set(key string, value interface{}, expiration time.Duratio
 	pantry.store[key] = item
 	pantry.mutex.Unlock()
 
-	return &Result{
+	return &Result[T]{
 		action: "set",
 		key:    key,
 		item:   item,
@@ -71,32 +64,32 @@ func (pantry *Pantry) Set(key string, value interface{}, expiration time.Duratio
 	}
 }
 
-func (pantry *Pantry) Remove(key string) *Result {
+func (pantry *Pantry[T]) Remove(key string) *Result[T] {
 	pantry.mutex.Lock()
 	delete(pantry.store, key)
 	pantry.mutex.Unlock()
 
-	return &Result{
+	return &Result[T]{
 		action: "remove",
 		key:    key,
 		pantry: pantry,
 	}
 }
 
-func (pantry *Pantry) IsEmpty() bool {
+func (pantry *Pantry[T]) IsEmpty() bool {
 	pantry.mutex.RLock()
 	defer pantry.mutex.RUnlock()
 	return len(pantry.store) == 0
 }
 
-func (pantry *Pantry) Close() {
+func (pantry *Pantry[T]) Close() {
 	pantry.close <- struct{}{}
 	pantry.mutex.Lock()
-	pantry.store = make(map[string]Item)
+	pantry.store = make(map[string]Item[T])
 	pantry.mutex.Unlock()
 }
 
-func (pantry *Pantry) Load() error {
+func (pantry *Pantry[T]) Load() error {
 	directory := pantry.options.PersistenceDirectory
 
 	if directory == "" {
@@ -124,7 +117,7 @@ func (pantry *Pantry) Load() error {
 		buffer := bytes.NewBuffer(content)
 		decoder := gob.NewDecoder(buffer)
 
-		var item Item
+		var item Item[T]
 		if err := decoder.Decode(&item); err != nil {
 			return err
 		}
@@ -137,7 +130,7 @@ func (pantry *Pantry) Load() error {
 	return nil
 }
 
-func New(options *Options) *Pantry {
+func New[T any](options *Options) *Pantry[T] {
 	finalOptions := Options{
 		CleaningInterval:     options.CleaningInterval,
 		PersistenceDirectory: options.PersistenceDirectory,
@@ -147,8 +140,8 @@ func New(options *Options) *Pantry {
 		finalOptions.CleaningInterval = time.Minute
 	}
 
-	pantry := &Pantry{
-		store:   make(map[string]Item),
+	pantry := &Pantry[T]{
+		store:   make(map[string]Item[T]),
 		mutex:   sync.RWMutex{},
 		options: finalOptions,
 		close:   make(chan struct{}),

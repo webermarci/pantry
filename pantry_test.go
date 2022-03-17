@@ -8,7 +8,7 @@ import (
 )
 
 func TestEmptyOptions(t *testing.T) {
-	p := New(&Options{})
+	p := New[string](&Options{})
 	defer p.Close()
 
 	if p.options.PersistenceDirectory != "" {
@@ -21,7 +21,7 @@ func TestEmptyOptions(t *testing.T) {
 }
 
 func TestCleaning(t *testing.T) {
-	p := New(&Options{
+	p := New[string](&Options{
 		CleaningInterval: 3 * time.Millisecond,
 	})
 	defer p.Close()
@@ -53,7 +53,7 @@ func TestCleaning(t *testing.T) {
 }
 
 func TestIsEmtpy(t *testing.T) {
-	p := New(&Options{})
+	p := New[string](&Options{})
 	defer p.Close()
 
 	if !p.IsEmpty() {
@@ -63,7 +63,7 @@ func TestIsEmtpy(t *testing.T) {
 }
 
 func TestLoadWithoutSetDirectory(t *testing.T) {
-	p := New(&Options{})
+	p := New[string](&Options{})
 	defer p.Close()
 
 	if err := p.Load(); err != nil {
@@ -72,7 +72,7 @@ func TestLoadWithoutSetDirectory(t *testing.T) {
 }
 
 func TestLoadWithMissingDirectory(t *testing.T) {
-	p := New(&Options{
+	p := New[string](&Options{
 		PersistenceDirectory: t.Name(),
 	})
 	defer p.Close()
@@ -93,7 +93,7 @@ func TestSet(t *testing.T) {
 	key := "test"
 	value := "hello"
 
-	p := New(&Options{})
+	p := New[string](&Options{})
 	defer p.Close()
 
 	_, found := p.Get(key)
@@ -115,7 +115,7 @@ func TestSetPersisted(t *testing.T) {
 	key := "test"
 	value := "hello"
 
-	p := New(&Options{
+	p := New[string](&Options{
 		PersistenceDirectory: t.Name(),
 	})
 
@@ -145,7 +145,7 @@ func TestSetPersisted(t *testing.T) {
 
 	p.Close()
 
-	p = New(&Options{
+	p = New[string](&Options{
 		PersistenceDirectory: t.Name(),
 	})
 
@@ -171,9 +171,9 @@ func TestSetPersistedStruct(t *testing.T) {
 	key := "test"
 	value := TestData{Number: 42, Text: "hello"}
 
-	p := New(&Options{
+	p := New[TestData](&Options{
 		PersistenceDirectory: t.Name(),
-	}).Type(TestData{})
+	})
 
 	defer func() {
 		err := os.RemoveAll(p.options.PersistenceDirectory)
@@ -201,7 +201,7 @@ func TestSetPersistedStruct(t *testing.T) {
 
 	p.Close()
 
-	p = New(&Options{
+	p = New[TestData](&Options{
 		PersistenceDirectory: t.Name(),
 	})
 
@@ -215,44 +215,18 @@ func TestSetPersistedStruct(t *testing.T) {
 		t.Fatal("not found")
 	}
 
-	if v.(TestData).Number != 42 {
+	if v.Number != 42 {
 		t.Fatal("not 42")
 	}
 
 	p.Close()
 }
 
-func TestCustomStructWithoutSettingType(t *testing.T) {
-	type TestData struct {
-		Number int
-		Text   string
-	}
-
-	key := "test"
-	value := TestData{Number: 42, Text: "hello"}
-
-	p := New(&Options{
-		PersistenceDirectory: t.Name(),
-	})
-	defer p.Close()
-
-	defer func() {
-		err := os.RemoveAll(p.options.PersistenceDirectory)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}()
-
-	if err := p.Set(key, value, time.Hour).Persist(); err == nil {
-		t.Fatal("expected error")
-	}
-}
-
 func TestRemove(t *testing.T) {
 	key := "test"
 	value := "hello"
 
-	p := New(&Options{})
+	p := New[string](&Options{})
 	defer p.Close()
 
 	p.Set(key, value, time.Hour)
@@ -276,7 +250,7 @@ func TestRemovePersisted(t *testing.T) {
 	key := "test"
 	value := "hello"
 
-	p := New(&Options{
+	p := New[string](&Options{
 		PersistenceDirectory: t.Name(),
 	})
 
@@ -309,7 +283,7 @@ func TestRemovePersisted(t *testing.T) {
 
 	p.Close()
 
-	p = New(&Options{
+	p = New[string](&Options{
 		PersistenceDirectory: t.Name(),
 	})
 
@@ -327,7 +301,7 @@ func TestRemovePersisted(t *testing.T) {
 }
 
 func TestGetAll(t *testing.T) {
-	p := New(&Options{})
+	p := New[int](&Options{})
 	defer p.Close()
 
 	p.Set("first", 1, time.Hour)
@@ -342,7 +316,7 @@ func TestGetAll(t *testing.T) {
 }
 
 func TestGetAllIgnoreExpired(t *testing.T) {
-	p := New(&Options{
+	p := New[int](&Options{
 		CleaningInterval: time.Minute,
 	})
 	defer p.Close()
@@ -367,7 +341,7 @@ func TestGetAllIgnoreExpired(t *testing.T) {
 }
 
 func TestGetAllPersisted(t *testing.T) {
-	p := New(&Options{
+	p := New[int](&Options{
 		PersistenceDirectory: t.Name(),
 	})
 
@@ -398,7 +372,7 @@ func TestGetAllPersisted(t *testing.T) {
 
 	p.Close()
 
-	p = New(&Options{
+	p = New[int](&Options{
 		PersistenceDirectory: t.Name(),
 	})
 
@@ -414,7 +388,7 @@ func TestGetAllPersisted(t *testing.T) {
 }
 
 func TestInvalidResultAction(t *testing.T) {
-	p := New(&Options{
+	p := New[string](&Options{
 		PersistenceDirectory: t.Name(),
 	})
 	defer p.Close()
@@ -426,7 +400,7 @@ func TestInvalidResultAction(t *testing.T) {
 		}
 	}()
 
-	result := Result{
+	result := Result[string]{
 		action: "invalid",
 		pantry: p,
 	}
@@ -440,7 +414,7 @@ func TestCleanExpiredPersisted(t *testing.T) {
 	key := "test"
 	value := "hello"
 
-	p := New(&Options{
+	p := New[string](&Options{
 		PersistenceDirectory: t.Name(),
 		CleaningInterval:     time.Millisecond,
 	})
@@ -473,17 +447,17 @@ func TestCleanExpiredPersisted(t *testing.T) {
 }
 
 func BenchmarkCache(b *testing.B) {
-	p := New(&Options{})
+	p := New[int](&Options{})
 	defer p.Close()
 
 	for i := 0; i < b.N; i++ {
 		v := strconv.Itoa(i)
-		p.Set(v, v, time.Hour)
+		p.Set(v, i, time.Hour)
 	}
 }
 
 func BenchmarkPersisted(b *testing.B) {
-	p := New(&Options{
+	p := New[int](&Options{
 		PersistenceDirectory: b.Name(),
 	})
 	defer p.Close()
@@ -497,7 +471,7 @@ func BenchmarkPersisted(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		v := strconv.Itoa(i)
-		if err := p.Set(v, v, time.Hour).Persist(); err != nil {
+		if err := p.Set(v, i, time.Hour).Persist(); err != nil {
 			b.Fatal(err)
 		}
 	}
