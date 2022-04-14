@@ -16,10 +16,15 @@ type Item[T any] struct {
 }
 
 type Pantry[T any] struct {
-	store   map[string]Item[T]
-	mutex   sync.RWMutex
-	close   chan struct{}
-	options Options
+	store           map[string]Item[T]
+	mutex           sync.RWMutex
+	close           chan struct{}
+	persistencePath string
+}
+
+func (pantry *Pantry[T]) WithPersistence(path string) *Pantry[T] {
+	pantry.persistencePath = path
+	return pantry
 }
 
 func (pantry *Pantry[T]) Get(key string) (T, bool) {
@@ -90,7 +95,7 @@ func (pantry *Pantry[T]) Close() {
 }
 
 func (pantry *Pantry[T]) Load() error {
-	directory := pantry.options.PersistenceDirectory
+	directory := pantry.persistencePath
 
 	if directory == "" {
 		return nil
@@ -130,25 +135,15 @@ func (pantry *Pantry[T]) Load() error {
 	return nil
 }
 
-func New[T any](options *Options) *Pantry[T] {
-	finalOptions := Options{
-		CleaningInterval:     options.CleaningInterval,
-		PersistenceDirectory: options.PersistenceDirectory,
-	}
-
-	if options.CleaningInterval == 0 {
-		finalOptions.CleaningInterval = time.Minute
-	}
-
+func New[T any]() *Pantry[T] {
 	pantry := &Pantry[T]{
-		store:   make(map[string]Item[T]),
-		mutex:   sync.RWMutex{},
-		options: finalOptions,
-		close:   make(chan struct{}),
+		store: make(map[string]Item[T]),
+		mutex: sync.RWMutex{},
+		close: make(chan struct{}),
 	}
 
 	go func() {
-		ticker := time.NewTicker(pantry.options.CleaningInterval)
+		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
 
 		for {
@@ -159,9 +154,9 @@ func New[T any](options *Options) *Pantry[T] {
 					if time.Now().UnixNano() > item.Expires {
 						delete(pantry.store, key)
 
-						if options.PersistenceDirectory != "" {
+						if pantry.persistencePath != "" {
 							fileName := fmt.Sprintf("%s/%s",
-								pantry.options.PersistenceDirectory, key)
+								pantry.persistencePath, key)
 							os.Remove(fileName)
 						}
 					}

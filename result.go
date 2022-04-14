@@ -16,7 +16,11 @@ type Result[T any] struct {
 }
 
 func (result *Result[T]) Persist() error {
-	directory := result.pantry.options.PersistenceDirectory
+	if result.pantry.persistencePath == "" {
+		return errors.New("persistence path is missing")
+	}
+
+	directory := result.pantry.persistencePath
 	if _, err := os.Stat(directory); os.IsNotExist(err) {
 		if err := os.Mkdir(directory, 0755); err != nil {
 			return err
