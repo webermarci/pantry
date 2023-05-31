@@ -365,6 +365,21 @@ func TestGetAllPersisted(t *testing.T) {
 	}
 }
 
+func TestGetAllFlat(t *testing.T) {
+	p := New[int]()
+	defer p.Close()
+
+	p.Set("first", 1, time.Hour)
+	p.Set("second", 2, time.Hour)
+	p.Set("third", 3, time.Hour)
+
+	values := p.GetAllFlat()
+	if len(values) != 3 {
+		t.Log(values)
+		t.Fatal("not 3 items")
+	}
+}
+
 func TestInvalidResultAction(t *testing.T) {
 	p := New[string]().WithPersistence(t.Name())
 	defer p.Close()

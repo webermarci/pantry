@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"sync"
 	"time"
@@ -48,6 +47,20 @@ func (pantry *Pantry[T]) GetAll() map[string]T {
 			continue
 		}
 		items[key] = item.Value
+	}
+	return items
+}
+
+func (pantry *Pantry[T]) GetAllFlat() []T {
+	pantry.mutex.RLock()
+	defer pantry.mutex.RUnlock()
+
+	items := []T{}
+	for _, item := range pantry.store {
+		if time.Now().UnixNano() > item.Expires {
+			continue
+		}
+		items = append(items, item.Value)
 	}
 	return items
 }
@@ -107,14 +120,14 @@ func (pantry *Pantry[T]) Load() error {
 		}
 	}
 
-	files, err := ioutil.ReadDir(directory)
+	files, err := os.ReadDir(directory)
 	if err != nil {
 		return err
 	}
 
 	for _, f := range files {
 		fullPath := fmt.Sprintf("%s/%s", directory, f.Name())
-		content, err := ioutil.ReadFile(fullPath)
+		content, err := os.ReadFile(fullPath)
 		if err != nil {
 			return err
 		}
