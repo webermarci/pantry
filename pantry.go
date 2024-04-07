@@ -94,11 +94,13 @@ func New[T any](ctx context.Context, expiration time.Duration) *Pantry[T] {
 		for {
 			select {
 			case <-ticker.C:
+				pantry.mutex.Lock()
 				for key, item := range pantry.store {
 					if time.Now().UnixNano() > item.Expires {
-						pantry.Remove(key)
+						delete(pantry.store, key)
 					}
 				}
+				pantry.mutex.Unlock()
 
 			case <-ctx.Done():
 				pantry.mutex.Lock()
