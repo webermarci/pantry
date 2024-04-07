@@ -1,10 +1,7 @@
 package pantry
 
 import (
-	"bytes"
-	"encoding/gob"
-	"fmt"
-	"os"
+	"context"
 	"sync"
 	"time"
 )
@@ -15,15 +12,9 @@ type Item[T any] struct {
 }
 
 type Pantry[T any] struct {
-	store           map[string]Item[T]
-	mutex           sync.RWMutex
-	close           chan struct{}
-	persistencePath string
-}
-
-func (pantry *Pantry[T]) WithPersistence(path string) *Pantry[T] {
-	pantry.persistencePath = path
-	return pantry
+	expiration time.Duration
+	store      map[string]Item[T]
+	mutex      sync.RWMutex
 }
 
 func (pantry *Pantry[T]) Get(key string) (T, bool) {
@@ -65,94 +56,35 @@ func (pantry *Pantry[T]) GetAllFlat() []T {
 	return items
 }
 
-func (pantry *Pantry[T]) Set(key string, value T, expiration time.Duration) *Result[T] {
-	item := Item[T]{
-		Value:   value,
-		Expires: time.Now().Add(expiration).UnixNano(),
-	}
+func (pantry *Pantry[T]) Set(key string, value T) {
 	pantry.mutex.Lock()
-	pantry.store[key] = item
-	pantry.mutex.Unlock()
+	defer pantry.mutex.Unlock()
 
-	return &Result[T]{
-		action: "set",
-		key:    key,
-		item:   item,
-		pantry: pantry,
+	pantry.store[key] = Item[T]{
+		Value:   value,
+		Expires: time.Now().Add(pantry.expiration).UnixNano(),
 	}
 }
 
-func (pantry *Pantry[T]) Remove(key string) *Result[T] {
+func (pantry *Pantry[T]) Remove(key string) {
 	pantry.mutex.Lock()
-	delete(pantry.store, key)
-	pantry.mutex.Unlock()
+	defer pantry.mutex.Unlock()
 
-	return &Result[T]{
-		action: "remove",
-		key:    key,
-		pantry: pantry,
-	}
+	delete(pantry.store, key)
 }
 
 func (pantry *Pantry[T]) IsEmpty() bool {
 	pantry.mutex.RLock()
 	defer pantry.mutex.RUnlock()
+
 	return len(pantry.store) == 0
 }
 
-func (pantry *Pantry[T]) Close() {
-	pantry.close <- struct{}{}
-	pantry.mutex.Lock()
-	pantry.store = make(map[string]Item[T])
-	pantry.mutex.Unlock()
-}
-
-func (pantry *Pantry[T]) Load() error {
-	directory := pantry.persistencePath
-
-	if directory == "" {
-		return nil
-	}
-
-	if _, err := os.Stat(directory); os.IsNotExist(err) {
-		if err := os.Mkdir(directory, 0755); err != nil {
-			return err
-		}
-	}
-
-	files, err := os.ReadDir(directory)
-	if err != nil {
-		return err
-	}
-
-	for _, f := range files {
-		fullPath := fmt.Sprintf("%s/%s", directory, f.Name())
-		content, err := os.ReadFile(fullPath)
-		if err != nil {
-			return err
-		}
-
-		buffer := bytes.NewBuffer(content)
-		decoder := gob.NewDecoder(buffer)
-
-		var item Item[T]
-		if err := decoder.Decode(&item); err != nil {
-			return err
-		}
-
-		pantry.mutex.Lock()
-		pantry.store[f.Name()] = item
-		pantry.mutex.Unlock()
-	}
-
-	return nil
-}
-
-func New[T any]() *Pantry[T] {
+func New[T any](ctx context.Context, expiration time.Duration) *Pantry[T] {
 	pantry := &Pantry[T]{
-		store: make(map[string]Item[T]),
-		mutex: sync.RWMutex{},
-		close: make(chan struct{}),
+		expiration: expiration,
+		store:      make(map[string]Item[T]),
+		mutex:      sync.RWMutex{},
 	}
 
 	go func() {
@@ -162,21 +94,16 @@ func New[T any]() *Pantry[T] {
 		for {
 			select {
 			case <-ticker.C:
-				pantry.mutex.Lock()
 				for key, item := range pantry.store {
 					if time.Now().UnixNano() > item.Expires {
-						delete(pantry.store, key)
-
-						if pantry.persistencePath != "" {
-							fileName := fmt.Sprintf("%s/%s",
-								pantry.persistencePath, key)
-							os.Remove(fileName)
-						}
+						pantry.Remove(key)
 					}
 				}
-				pantry.mutex.Unlock()
 
-			case <-pantry.close:
+			case <-ctx.Done():
+				pantry.mutex.Lock()
+				pantry.store = make(map[string]Item[T])
+				pantry.mutex.Unlock()
 				return
 			}
 		}
