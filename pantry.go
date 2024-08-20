@@ -2,18 +2,19 @@ package pantry
 
 import (
 	"context"
+	"iter"
 	"sync"
 	"time"
 )
 
-type Item[T any] struct {
-	Value   T
-	Expires int64
+type item[T any] struct {
+	value   T
+	expires int64
 }
 
 type Pantry[T any] struct {
 	expiration time.Duration
-	store      map[string]Item[T]
+	store      map[string]item[T]
 	mutex      sync.RWMutex
 }
 
@@ -22,47 +23,19 @@ func (pantry *Pantry[T]) Get(key string) (T, bool) {
 	defer pantry.mutex.RUnlock()
 
 	item, found := pantry.store[key]
-	if found && time.Now().UnixNano() > item.Expires {
+	if found && time.Now().UnixNano() > item.expires {
 		return *new(T), false
 	}
-	return item.Value, found
-}
-
-func (pantry *Pantry[T]) GetAll() map[string]T {
-	pantry.mutex.RLock()
-	defer pantry.mutex.RUnlock()
-
-	items := make(map[string]T)
-	for key, item := range pantry.store {
-		if time.Now().UnixNano() > item.Expires {
-			continue
-		}
-		items[key] = item.Value
-	}
-	return items
-}
-
-func (pantry *Pantry[T]) GetAllFlat() []T {
-	pantry.mutex.RLock()
-	defer pantry.mutex.RUnlock()
-
-	items := []T{}
-	for _, item := range pantry.store {
-		if time.Now().UnixNano() > item.Expires {
-			continue
-		}
-		items = append(items, item.Value)
-	}
-	return items
+	return item.value, found
 }
 
 func (pantry *Pantry[T]) Set(key string, value T) {
 	pantry.mutex.Lock()
 	defer pantry.mutex.Unlock()
 
-	pantry.store[key] = Item[T]{
-		Value:   value,
-		Expires: time.Now().Add(pantry.expiration).UnixNano(),
+	pantry.store[key] = item[T]{
+		value:   value,
+		expires: time.Now().Add(pantry.expiration).UnixNano(),
 	}
 }
 
@@ -80,15 +53,66 @@ func (pantry *Pantry[T]) IsEmpty() bool {
 	return len(pantry.store) == 0
 }
 
+func (pantry *Pantry[T]) Keys() iter.Seq[string] {
+	return func(yield func(string) bool) {
+		pantry.mutex.RLock()
+		defer pantry.mutex.RUnlock()
+
+		for key, item := range pantry.store {
+			if time.Now().UnixNano() > item.expires {
+				continue
+			}
+
+			if !yield(key) {
+				return
+			}
+		}
+	}
+}
+
+func (pantry *Pantry[T]) Values() iter.Seq[T] {
+	return func(yield func(T) bool) {
+		pantry.mutex.RLock()
+		defer pantry.mutex.RUnlock()
+
+		for _, item := range pantry.store {
+			if time.Now().UnixNano() > item.expires {
+				continue
+			}
+
+			if !yield(item.value) {
+				return
+			}
+		}
+	}
+}
+
+func (pantry *Pantry[T]) All() iter.Seq2[string, T] {
+	return func(yield func(string, T) bool) {
+		pantry.mutex.RLock()
+		defer pantry.mutex.RUnlock()
+
+		for key, item := range pantry.store {
+			if time.Now().UnixNano() > item.expires {
+				continue
+			}
+
+			if !yield(key, item.value) {
+				return
+			}
+		}
+	}
+}
+
 func New[T any](ctx context.Context, expiration time.Duration) *Pantry[T] {
 	pantry := &Pantry[T]{
 		expiration: expiration,
-		store:      make(map[string]Item[T]),
+		store:      make(map[string]item[T]),
 		mutex:      sync.RWMutex{},
 	}
 
 	go func() {
-		ticker := time.NewTicker(3 * time.Second)
+		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 
 		for {
@@ -96,7 +120,7 @@ func New[T any](ctx context.Context, expiration time.Duration) *Pantry[T] {
 			case <-ticker.C:
 				pantry.mutex.Lock()
 				for key, item := range pantry.store {
-					if time.Now().UnixNano() > item.Expires {
+					if time.Now().UnixNano() > item.expires {
 						delete(pantry.store, key)
 					}
 				}
@@ -104,7 +128,7 @@ func New[T any](ctx context.Context, expiration time.Duration) *Pantry[T] {
 
 			case <-ctx.Done():
 				pantry.mutex.Lock()
-				pantry.store = make(map[string]Item[T])
+				pantry.store = make(map[string]item[T])
 				pantry.mutex.Unlock()
 				return
 			}

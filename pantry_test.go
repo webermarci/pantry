@@ -22,7 +22,7 @@ func TestCleaning(t *testing.T) {
 		t.Fatal("not found")
 	}
 
-	time.Sleep(3 * time.Second)
+	time.Sleep(5 * time.Second)
 
 	if _, found := p.Get("test"); found {
 		t.Fatal("found")
@@ -102,74 +102,155 @@ func TestGetIgnoreExpired(t *testing.T) {
 	}
 }
 
-func TestGetAll(t *testing.T) {
+func TestValues(t *testing.T) {
 	p := New[int](context.Background(), time.Hour)
 
 	p.Set("first", 1)
 	p.Set("second", 2)
 	p.Set("third", 3)
 
-	values := p.GetAll()
-	if len(values) != 3 {
-		t.Log(values)
+	counter := 0
+
+	for value := range p.Values() {
+		t.Log(value)
+		counter++
+	}
+
+	if counter != 3 {
 		t.Fatal("not 3 items")
 	}
 }
 
-func TestGetAllIgnoreExpired(t *testing.T) {
+func TestValuesIgnoreExpired(t *testing.T) {
 	p := New[int](context.Background(), 10*time.Millisecond)
 
 	p.Set("first", 1)
 	p.Set("second", 2)
 	p.Set("third", 3)
 
-	values := p.GetAll()
-	if len(values) != 3 {
-		t.Log(values)
+	counter := 0
+
+	for value := range p.Values() {
+		t.Log(value)
+		counter++
+	}
+
+	if counter != 3 {
 		t.Fatal("not 3 items")
 	}
 
 	time.Sleep(20 * time.Millisecond)
 
-	values = p.GetAll()
-	if len(values) != 0 {
-		t.Log(values)
+	counter = 0
+
+	for value := range p.Values() {
+		t.Log(value)
+		counter++
+	}
+
+	if counter != 0 {
 		t.Fatal("not ignored")
 	}
 }
 
-func TestGetAllFlat(t *testing.T) {
+func TestKeys(t *testing.T) {
 	p := New[int](context.Background(), time.Hour)
 
 	p.Set("first", 1)
 	p.Set("second", 2)
 	p.Set("third", 3)
 
-	values := p.GetAllFlat()
-	if len(values) != 3 {
-		t.Log(values)
+	counter := 0
+
+	for key := range p.Keys() {
+		t.Log(key)
+		counter++
+	}
+
+	if counter != 3 {
 		t.Fatal("not 3 items")
 	}
 }
 
-func TestGetAllFlatIgnoreExpired(t *testing.T) {
+func TestKeysIgnoreExpired(t *testing.T) {
 	p := New[int](context.Background(), 10*time.Millisecond)
 
 	p.Set("first", 1)
 	p.Set("second", 2)
 	p.Set("third", 3)
 
-	values := p.GetAllFlat()
-	if len(values) != 3 {
-		t.Log(values)
+	counter := 0
+
+	for key := range p.Keys() {
+		t.Log(key)
+		counter++
+	}
+
+	if counter != 3 {
 		t.Fatal("not 3 items")
 	}
 
 	time.Sleep(20 * time.Millisecond)
 
-	values = p.GetAllFlat()
-	if len(values) != 0 {
-		t.Log(values)
+	counter = 0
+
+	for key := range p.Keys() {
+		t.Log(key)
+		counter++
+	}
+
+	if counter != 0 {
+		t.Fatal("not ignored")
+	}
+}
+
+func TestAll(t *testing.T) {
+	p := New[int](context.Background(), time.Hour)
+
+	p.Set("first", 1)
+	p.Set("second", 2)
+	p.Set("third", 3)
+
+	counter := 0
+
+	for key, value := range p.All() {
+		t.Log(key, value)
+		counter++
+	}
+
+	if counter != 3 {
+		t.Fatal("not 3 items")
+	}
+}
+
+func TestAllIgnoreExpired(t *testing.T) {
+	p := New[int](context.Background(), 10*time.Millisecond)
+
+	p.Set("first", 1)
+	p.Set("second", 2)
+	p.Set("third", 3)
+
+	counter := 0
+
+	for key, value := range p.All() {
+		t.Log(key, value)
+		counter++
+	}
+
+	if counter != 3 {
+		t.Fatal("not 3 items")
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	counter = 0
+
+	for key, value := range p.All() {
+		t.Log(key, value)
+		counter++
+	}
+
+	if counter != 0 {
 		t.Fatal("not ignored")
 	}
 }
