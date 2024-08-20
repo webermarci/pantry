@@ -121,6 +121,19 @@ func TestValues(t *testing.T) {
 	}
 }
 
+func TestValuesBreak(t *testing.T) {
+	p := New[int](context.Background(), time.Hour)
+
+	p.Set("first", 1)
+	p.Set("second", 2)
+	p.Set("third", 3)
+
+	for value := range p.Values() {
+		t.Log(value)
+		break
+	}
+}
+
 func TestValuesIgnoreExpired(t *testing.T) {
 	p := New[int](context.Background(), 10*time.Millisecond)
 
@@ -172,6 +185,19 @@ func TestKeys(t *testing.T) {
 	}
 }
 
+func TestKeysBreak(t *testing.T) {
+	p := New[int](context.Background(), time.Hour)
+
+	p.Set("first", 1)
+	p.Set("second", 2)
+	p.Set("third", 3)
+
+	for key := range p.Keys() {
+		t.Log(key)
+		break
+	}
+}
+
 func TestKeysIgnoreExpired(t *testing.T) {
 	p := New[int](context.Background(), 10*time.Millisecond)
 
@@ -220,6 +246,19 @@ func TestAll(t *testing.T) {
 
 	if counter != 3 {
 		t.Fatal("not 3 items")
+	}
+}
+
+func TestAllBreak(t *testing.T) {
+	p := New[int](context.Background(), time.Hour)
+
+	p.Set("first", 1)
+	p.Set("second", 2)
+	p.Set("third", 3)
+
+	for key, value := range p.All() {
+		t.Log(key, value)
+		break
 	}
 }
 
