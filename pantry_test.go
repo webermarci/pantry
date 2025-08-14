@@ -8,13 +8,13 @@ import (
 )
 
 func TestContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	New[string](ctx, time.Hour)
 	cancel()
 }
 
 func TestCleaning(t *testing.T) {
-	p := New[string](context.Background(), 100*time.Millisecond)
+	p := New[string](t.Context(), 100*time.Millisecond)
 
 	p.Set("test", "hello")
 
@@ -36,7 +36,7 @@ func TestCleaning(t *testing.T) {
 }
 
 func TestIsEmtpy(t *testing.T) {
-	p := New[string](context.Background(), time.Hour)
+	p := New[string](t.Context(), time.Hour)
 
 	if !p.IsEmpty() {
 		t.Log(p.store)
@@ -48,7 +48,7 @@ func TestSet(t *testing.T) {
 	key := "test"
 	value := "hello"
 
-	p := New[string](context.Background(), time.Hour)
+	p := New[string](t.Context(), time.Hour)
 
 	if _, found := p.Get(key); found {
 		t.Log(p.store)
@@ -67,7 +67,7 @@ func TestRemove(t *testing.T) {
 	key := "test"
 	value := "hello"
 
-	p := New[string](context.Background(), time.Hour)
+	p := New[string](t.Context(), time.Hour)
 
 	p.Set(key, value)
 
@@ -84,8 +84,61 @@ func TestRemove(t *testing.T) {
 	}
 }
 
+func TestClear(t *testing.T) {
+	p := New[string](t.Context(), time.Hour)
+
+	p.Set("test", "hello")
+	p.Set("test2", "world")
+
+	if p.IsEmpty() {
+		t.Fatal("empty")
+	}
+
+	p.Clear()
+
+	if !p.IsEmpty() {
+		t.Fatal("not empty")
+	}
+}
+
+func TestContains(t *testing.T) {
+	p := New[string](t.Context(), time.Hour)
+
+	p.Set("test", "hello")
+
+	if !p.Contains("test") {
+		t.Fatal("doesn't contain")
+	}
+
+	p.Remove("test")
+
+	if p.Contains("test") {
+		t.Fatal("contains")
+	}
+}
+
+func TestCount(t *testing.T) {
+	p := New[string](t.Context(), time.Hour)
+
+	if p.Count() != 0 {
+		t.Fatal("not 0")
+	}
+
+	p.Set("test", "hello")
+
+	if p.Count() != 1 {
+		t.Fatal("not 1")
+	}
+
+	p.Remove("test")
+
+	if p.Count() != 0 {
+		t.Fatal("not 0")
+	}
+}
+
 func TestGetIgnoreExpired(t *testing.T) {
-	p := New[int](context.Background(), 10*time.Millisecond)
+	p := New[int](t.Context(), 10*time.Millisecond)
 
 	p.Set(t.Name(), 1)
 
@@ -103,7 +156,7 @@ func TestGetIgnoreExpired(t *testing.T) {
 }
 
 func TestValues(t *testing.T) {
-	p := New[int](context.Background(), time.Hour)
+	p := New[int](t.Context(), time.Hour)
 
 	p.Set("first", 1)
 	p.Set("second", 2)
@@ -122,7 +175,7 @@ func TestValues(t *testing.T) {
 }
 
 func TestValuesBreak(t *testing.T) {
-	p := New[int](context.Background(), time.Hour)
+	p := New[int](t.Context(), time.Hour)
 
 	p.Set("first", 1)
 	p.Set("second", 2)
@@ -135,7 +188,7 @@ func TestValuesBreak(t *testing.T) {
 }
 
 func TestValuesIgnoreExpired(t *testing.T) {
-	p := New[int](context.Background(), 10*time.Millisecond)
+	p := New[int](t.Context(), 10*time.Millisecond)
 
 	p.Set("first", 1)
 	p.Set("second", 2)
@@ -167,7 +220,7 @@ func TestValuesIgnoreExpired(t *testing.T) {
 }
 
 func TestKeys(t *testing.T) {
-	p := New[int](context.Background(), time.Hour)
+	p := New[int](t.Context(), time.Hour)
 
 	p.Set("first", 1)
 	p.Set("second", 2)
@@ -186,7 +239,7 @@ func TestKeys(t *testing.T) {
 }
 
 func TestKeysBreak(t *testing.T) {
-	p := New[int](context.Background(), time.Hour)
+	p := New[int](t.Context(), time.Hour)
 
 	p.Set("first", 1)
 	p.Set("second", 2)
@@ -199,7 +252,7 @@ func TestKeysBreak(t *testing.T) {
 }
 
 func TestKeysIgnoreExpired(t *testing.T) {
-	p := New[int](context.Background(), 10*time.Millisecond)
+	p := New[int](t.Context(), 10*time.Millisecond)
 
 	p.Set("first", 1)
 	p.Set("second", 2)
@@ -231,7 +284,7 @@ func TestKeysIgnoreExpired(t *testing.T) {
 }
 
 func TestAll(t *testing.T) {
-	p := New[int](context.Background(), time.Hour)
+	p := New[int](t.Context(), time.Hour)
 
 	p.Set("first", 1)
 	p.Set("second", 2)
@@ -250,7 +303,7 @@ func TestAll(t *testing.T) {
 }
 
 func TestAllBreak(t *testing.T) {
-	p := New[int](context.Background(), time.Hour)
+	p := New[int](t.Context(), time.Hour)
 
 	p.Set("first", 1)
 	p.Set("second", 2)
@@ -263,7 +316,7 @@ func TestAllBreak(t *testing.T) {
 }
 
 func TestAllIgnoreExpired(t *testing.T) {
-	p := New[int](context.Background(), 10*time.Millisecond)
+	p := New[int](t.Context(), 10*time.Millisecond)
 
 	p.Set("first", 1)
 	p.Set("second", 2)
@@ -295,7 +348,7 @@ func TestAllIgnoreExpired(t *testing.T) {
 }
 
 func BenchmarkGet(b *testing.B) {
-	p := New[int](context.Background(), time.Hour)
+	p := New[int](b.Context(), time.Hour)
 
 	for i := 0; i < b.N; i++ {
 		key := strconv.Itoa(i)
@@ -308,13 +361,26 @@ func BenchmarkGet(b *testing.B) {
 }
 
 func BenchmarkSet(b *testing.B) {
-	p := New[int](context.Background(), time.Hour)
+	p := New[int](b.Context(), time.Hour)
 
 	for i := 0; i < b.N; i++ {
 		key := strconv.Itoa(i)
 
 		b.Run(key, func(b *testing.B) {
 			p.Set(key, i)
+		})
+	}
+}
+
+func BenchmarkRemove(b *testing.B) {
+	p := New[int](b.Context(), time.Hour)
+
+	for i := 0; i < b.N; i++ {
+		key := strconv.Itoa(i)
+		p.Set(key, i)
+
+		b.Run(key, func(b *testing.B) {
+			p.Remove(key)
 		})
 	}
 }
