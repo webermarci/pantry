@@ -1,7 +1,7 @@
 # Pantry
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/webermarci/pantry.svg)](https://pkg.go.dev/github.com/webermarci/pantry)
-[![Test](https://github.com/webermarci/pantry/actions/workflows/testing.yml/badge.svg)](https://github.com/webermarci/pantry/actions/workflows/testing.yml)
+[![Test](https://github.com/webermarci/pantry/actions/workflows/test.yml/badge.svg)](https://github.com/webermarci/pantry/actions/workflows/test.yml)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 Pantry is a generic, thread-safe, in-memory key-value store for Go with expiring
