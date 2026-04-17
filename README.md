@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"time"
 
-	"[github.com/webermarci/pantry](https://github.com/webermarci/pantry)"
+	"github.com/webermarci/pantry"
 )
 
 func main() {
