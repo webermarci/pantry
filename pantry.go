@@ -70,7 +70,7 @@ func WithShards[K comparable, T any](count int) PantryOption[K, T] {
 		actualCount := nextPowerOfTwo(count)
 		p.shards = make([]shard[K, T], actualCount)
 		p.mask = uint32(actualCount - 1)
-		for i := 0; i < actualCount; i++ {
+		for i := range actualCount {
 			p.shards[i].store = make(map[K]item[T])
 		}
 	}
