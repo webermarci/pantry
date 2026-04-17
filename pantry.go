@@ -1,172 +1,358 @@
-// Package pantry provides a thread-safe, in-memory key-value store for Go with expiring items.
 package pantry
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"sync"
 	"time"
 )
+
+type Observer interface {
+	OnHit(key any)
+	OnMiss(key any)
+	OnSet(key any, ttl time.Duration)
+	OnRemove(key any)
+	OnEvict(key any)
+	OnStorageError(err error, op string)
+}
+
+type Persister[K comparable, T any] interface {
+	Save(key K, value T) error
+	Delete(key K) error
+	Load() (map[K]T, error)
+}
+
+type Snapshotter[K comparable, T any] interface {
+	Save(data map[K]T) error
+	Load() (map[K]T, error)
+}
 
 type item[T any] struct {
 	value   T
 	expires int64
 }
 
-// Pantry is a thread-safe, in-memory key-value store with expiring items
-type Pantry[T any] struct {
-	expiration time.Duration
-	store      map[string]item[T]
-	mutex      sync.RWMutex
+type shard[K comparable, T any] struct {
+	sync.RWMutex
+	store map[K]item[T]
 }
 
-// Get retrieves a value from the pantry. If the item has expired, it will be removed and `false` will be returned.
-func (pantry *Pantry[T]) Get(key string) (T, bool) {
-	pantry.mutex.RLock()
-	defer pantry.mutex.RUnlock()
+type setConfig struct {
+	ttl time.Duration
+}
 
-	item, found := pantry.store[key]
-	if found && time.Now().UnixNano() > item.expires {
+type Pantry[K comparable, T any] struct {
+	shards           []shard[K, T]
+	mask             uint32
+	defaultTTL       time.Duration
+	janitorInterval  time.Duration
+	snapshotInterval time.Duration
+	observer         Observer
+	persister        Persister[K, T]
+	snapshotter      Snapshotter[K, T]
+	wg               sync.WaitGroup
+}
+
+type PantryOption[K comparable, T any] func(*Pantry[K, T])
+type SetOption func(*setConfig)
+
+func WithDefaultTTL[K comparable, T any](ttl time.Duration) PantryOption[K, T] {
+	return func(p *Pantry[K, T]) { p.defaultTTL = ttl }
+}
+
+func WithJanitorInterval[K comparable, T any](d time.Duration) PantryOption[K, T] {
+	return func(p *Pantry[K, T]) { p.janitorInterval = d }
+}
+
+func WithShards[K comparable, T any](count int) PantryOption[K, T] {
+	return func(p *Pantry[K, T]) {
+		actualCount := nextPowerOfTwo(count)
+		p.shards = make([]shard[K, T], actualCount)
+		p.mask = uint32(actualCount - 1)
+		for i := 0; i < actualCount; i++ {
+			p.shards[i].store = make(map[K]item[T])
+		}
+	}
+}
+
+func WithPersistence[K comparable, T any](pers Persister[K, T]) PantryOption[K, T] {
+	return func(p *Pantry[K, T]) { p.persister = pers }
+}
+
+func WithSnapshotting[K comparable, T any](s Snapshotter[K, T], interval time.Duration) PantryOption[K, T] {
+	return func(p *Pantry[K, T]) {
+		p.snapshotter = s
+		p.snapshotInterval = interval
+	}
+}
+
+func WithObserver[K comparable, T any](o Observer) PantryOption[K, T] {
+	return func(p *Pantry[K, T]) { p.observer = o }
+}
+
+func WithTTL(d time.Duration) SetOption {
+	return func(c *setConfig) { c.ttl = d }
+}
+
+func New[K comparable, T any](ctx context.Context, opts ...PantryOption[K, T]) *Pantry[K, T] {
+	p := &Pantry[K, T]{
+		defaultTTL:       0,
+		janitorInterval:  5 * time.Second,
+		snapshotInterval: 5 * time.Minute,
+	}
+
+	WithShards[K, T](16)(p)
+	for _, opt := range opts {
+		opt(p)
+	}
+
+	hydrate := func(data map[K]T) {
+		for k, v := range data {
+			s := p.getShard(k)
+			s.Lock()
+			s.store[k] = item[T]{value: v, expires: 0}
+			s.Unlock()
+		}
+	}
+
+	if p.snapshotter != nil {
+		if data, err := p.snapshotter.Load(); err == nil {
+			hydrate(data)
+		}
+		p.wg.Add(1)
+		go p.snapshotLoop(ctx)
+	}
+
+	if p.persister != nil {
+		if data, err := p.persister.Load(); err == nil {
+			hydrate(data)
+		}
+	}
+
+	p.wg.Add(1)
+	go p.janitor(ctx)
+
+	return p
+}
+
+func (p *Pantry[K, T]) Wait() { p.wg.Wait() }
+
+func (p *Pantry[K, T]) Get(key K) (T, bool) {
+	s := p.getShard(key)
+	s.RLock()
+	it, found := s.store[key]
+	s.RUnlock()
+
+	if found && it.expires > 0 && time.Now().UnixNano() > it.expires {
+		if p.observer != nil {
+			p.observer.OnMiss(key)
+		}
 		return *new(T), false
 	}
-	return item.value, found
-}
 
-// Set adds a value to the pantry. The item will expire after the default expiration time.
-func (pantry *Pantry[T]) Set(key string, value T) {
-	pantry.mutex.Lock()
-	defer pantry.mutex.Unlock()
-
-	pantry.store[key] = item[T]{
-		value:   value,
-		expires: time.Now().Add(pantry.expiration).UnixNano(),
+	if p.observer != nil {
+		if found {
+			p.observer.OnHit(key)
+		} else {
+			p.observer.OnMiss(key)
+		}
 	}
+	return it.value, found
 }
 
-// Remove removes a value from the pantry.
-func (pantry *Pantry[T]) Remove(key string) {
-	pantry.mutex.Lock()
-	defer pantry.mutex.Unlock()
+func (p *Pantry[K, T]) Set(key K, value T, opts ...SetOption) {
+	cfg := setConfig{ttl: p.defaultTTL}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 
-	delete(pantry.store, key)
-}
+	s := p.getShard(key)
+	s.Lock()
+	defer s.Unlock()
 
-// IsEmpty returns `true` if the pantry is empty.
-func (pantry *Pantry[T]) IsEmpty() bool {
-	pantry.mutex.RLock()
-	defer pantry.mutex.RUnlock()
+	var exp int64
+	if cfg.ttl > 0 {
+		exp = time.Now().Add(cfg.ttl).UnixNano()
+	}
 
-	return len(pantry.store) == 0
-}
+	s.store[key] = item[T]{value: value, expires: exp}
 
-// Contains returns `true` if the key exists in the pantry.
-func (pantry *Pantry[T]) Contains(key string) bool {
-	_, found := pantry.Get(key)
-	return found
-}
-
-// Count returns the number of items in the pantry.
-func (pantry *Pantry[T]) Count() int {
-	pantry.mutex.RLock()
-	defer pantry.mutex.RUnlock()
-
-	return len(pantry.store)
-}
-
-// Clear removes all items from the pantry.
-func (pantry *Pantry[T]) Clear() {
-	pantry.mutex.Lock()
-	defer pantry.mutex.Unlock()
-
-	pantry.store = make(map[string]item[T])
-}
-
-// Keys returns an iterator over the keys in the pantry.
-func (pantry *Pantry[T]) Keys() iter.Seq[string] {
-	return func(yield func(string) bool) {
-		pantry.mutex.RLock()
-		defer pantry.mutex.RUnlock()
-
-		for key, item := range pantry.store {
-			if time.Now().UnixNano() > item.expires {
-				continue
-			}
-
-			if !yield(key) {
-				return
-			}
+	if p.observer != nil {
+		p.observer.OnSet(key, cfg.ttl)
+	}
+	if p.persister != nil {
+		if err := p.persister.Save(key, value); err != nil && p.observer != nil {
+			p.observer.OnStorageError(err, "persister_save")
 		}
 	}
 }
 
-// Values returns an iterator over the values in the pantry.
-func (pantry *Pantry[T]) Values() iter.Seq[T] {
-	return func(yield func(T) bool) {
-		pantry.mutex.RLock()
-		defer pantry.mutex.RUnlock()
+func (p *Pantry[K, T]) Update(key K, fn func(val T, exists bool) T) {
+	s := p.getShard(key)
+	s.Lock()
+	defer s.Unlock()
 
-		for _, item := range pantry.store {
-			if time.Now().UnixNano() > item.expires {
-				continue
-			}
+	it, found := s.store[key]
+	now := time.Now().UnixNano()
+	if found && it.expires > 0 && now > it.expires {
+		found = false
+	}
 
-			if !yield(item.value) {
-				return
-			}
+	newVal := fn(it.value, found)
+	var exp int64
+	if found {
+		exp = it.expires
+	} else if p.defaultTTL > 0 {
+		exp = now + p.defaultTTL.Nanoseconds()
+	}
+
+	s.store[key] = item[T]{value: newVal, expires: exp}
+
+	if p.observer != nil {
+		p.observer.OnSet(key, time.Duration(exp-now))
+	}
+	if p.persister != nil {
+		if err := p.persister.Save(key, newVal); err != nil && p.observer != nil {
+			p.observer.OnStorageError(err, "persister_update")
 		}
 	}
 }
 
-// All returns an iterator over the keys and values in the pantry.
-func (pantry *Pantry[T]) All() iter.Seq2[string, T] {
-	return func(yield func(string, T) bool) {
-		pantry.mutex.RLock()
-		defer pantry.mutex.RUnlock()
+func (p *Pantry[K, T]) Remove(key K) {
+	s := p.getShard(key)
+	s.Lock()
+	delete(s.store, key)
+	s.Unlock()
 
-		for key, item := range pantry.store {
-			if time.Now().UnixNano() > item.expires {
-				continue
-			}
-
-			if !yield(key, item.value) {
-				return
-			}
+	if p.observer != nil {
+		p.observer.OnRemove(key)
+	}
+	if p.persister != nil {
+		if err := p.persister.Delete(key); err != nil && p.observer != nil {
+			p.observer.OnStorageError(err, "persister_delete")
 		}
 	}
 }
 
-// New creates a new pantry. The expiration duration is the time-to-live for items.
-// The context can be used to gracefully shutdown the pantry and free up resources.
-func New[T any](ctx context.Context, expiration time.Duration) *Pantry[T] {
-	pantry := &Pantry[T]{
-		expiration: expiration,
-		store:      make(map[string]item[T]),
-		mutex:      sync.RWMutex{},
+func (p *Pantry[K, T]) All() iter.Seq2[K, T] {
+	return func(yield func(K, T) bool) {
+		now := time.Now().UnixNano()
+		for i := range p.shards {
+			s := &p.shards[i]
+			s.RLock()
+			for k, it := range s.store {
+				if it.expires > 0 && now > it.expires {
+					continue
+				}
+				if !yield(k, it.value) {
+					s.RUnlock()
+					return
+				}
+			}
+			s.RUnlock()
+		}
 	}
+}
 
-	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
+func (p *Pantry[K, T]) getShard(key K) *shard[K, T] {
+	var hash uint32 = 2166136261
+	switch v := any(key).(type) {
+	case string:
+		for i := 0; i < len(v); i++ {
+			hash ^= uint32(v[i])
+			hash *= 16777619
+		}
+	case int:
+		hash ^= uint32(v)
+		hash *= 16777619
+	case uint32:
+		hash ^= v
+		hash *= 16777619
+	default:
+		s := fmt.Sprintf("%v", key)
+		for i := 0; i < len(s); i++ {
+			hash ^= uint32(s[i])
+			hash *= 16777619
+		}
+	}
+	return &p.shards[hash&p.mask]
+}
 
-		for {
-			select {
-			case <-ticker.C:
-				pantry.mutex.Lock()
-				for key, item := range pantry.store {
-					if time.Now().UnixNano() > item.expires {
-						delete(pantry.store, key)
+func (p *Pantry[K, T]) janitor(ctx context.Context) {
+	defer p.wg.Done()
+	ticker := time.NewTicker(p.janitorInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			now := time.Now().UnixNano()
+			for i := range p.shards {
+				p.shards[i].Lock()
+				for k, it := range p.shards[i].store {
+					if it.expires > 0 && now > it.expires {
+						delete(p.shards[i].store, k)
+						if p.observer != nil {
+							p.observer.OnEvict(k)
+						}
+						if p.persister != nil {
+							_ = p.persister.Delete(k)
+						}
 					}
 				}
-				pantry.mutex.Unlock()
-
-			case <-ctx.Done():
-				pantry.mutex.Lock()
-				pantry.store = make(map[string]item[T])
-				pantry.mutex.Unlock()
-				return
+				p.shards[i].Unlock()
 			}
 		}
-	}()
+	}
+}
 
-	return pantry
+func (p *Pantry[K, T]) snapshotLoop(ctx context.Context) {
+	defer p.wg.Done()
+	ticker := time.NewTicker(p.snapshotInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			p.saveSnapshot()
+			return
+		case <-ticker.C:
+			p.saveSnapshot()
+		}
+	}
+}
+
+func (p *Pantry[K, T]) saveSnapshot() {
+	if p.snapshotter == nil {
+		return
+	}
+	data := make(map[K]T)
+	now := time.Now().UnixNano()
+	for i := range p.shards {
+		p.shards[i].RLock()
+		for k, it := range p.shards[i].store {
+			if it.expires == 0 || now < it.expires {
+				data[k] = it.value
+			}
+		}
+		p.shards[i].RUnlock()
+	}
+	if err := p.snapshotter.Save(data); err != nil && p.observer != nil {
+		p.observer.OnStorageError(err, "snapshot_save")
+	}
+}
+
+func nextPowerOfTwo(n int) int {
+	if n <= 1 {
+		return 1
+	}
+	n--
+	n |= n >> 1
+	n |= n >> 2
+	n |= n >> 4
+	n |= n >> 8
+	n |= n >> 16
+	n++
+	return n
 }
